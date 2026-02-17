@@ -13,8 +13,20 @@ export default function DashboardClient({
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [loading, setLoading] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
   const router = useRouter()
   const supabase = createClient()
+
+  // Notify other tabs about bookmark changes
+  const broadcastChange = () => {
+    try {
+      const bc = new BroadcastChannel('bookmarks-sync')
+      bc.postMessage('changed')
+      bc.close()
+    } catch {
+      // BroadcastChannel not supported
+    }
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -33,6 +45,8 @@ export default function DashboardClient({
     } else {
       setUrl('')
       setTitle('')
+      setRefreshKey((k) => k + 1)
+      broadcastChange()
     }
     setLoading(false)
   }
@@ -133,7 +147,7 @@ export default function DashboardClient({
           <h2 className="text-2xl font-bold mb-6 text-gray-900">
             Your Bookmarks
           </h2>
-          <BookmarkList userId={user.id} />
+          <BookmarkList userId={user.id} refreshKey={refreshKey} />
         </div>
       </main>
     </div>

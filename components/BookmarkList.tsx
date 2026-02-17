@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 type Bookmark = {
@@ -11,31 +11,30 @@ type Bookmark = {
   title: string
 }
 
-export default function BookmarkList({ userId }: { userId: string }) {
+export default function BookmarkList({ userId, refreshKey = 0 }: { userId: string; refreshKey?: number }) {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [loading, setLoading] = useState(true)
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
+
+  const fetchBookmarks = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('bookmarks')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Error fetching bookmarks:', error)
+    } else {
+      setBookmarks(data || [])
+    }
+    setLoading(false)
+  }, [supabase, userId])
 
   useEffect(() => {
-    // Fetch initial bookmarks
-    async function fetchBookmarks() {
-      const { data, error } = await supabase
-        .from('bookmarks')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-
-      if (error) {
-        console.error('Error fetching bookmarks:', error)
-      } else {
-        setBookmarks(data || [])
-      }
-      setLoading(false)
-    }
-
     fetchBookmarks()
 
-    // Subscribe to real-time changes
+    // Subscribe to real-time changes (works if Supabase Realtime is enabled)
     const channel = supabase
       .channel('bookmarks-changes')
       .on(
@@ -58,10 +57,22 @@ export default function BookmarkList({ userId }: { userId: string }) {
       )
       .subscribe()
 
+    // Cross-tab sync via BroadcastChannel
+    let bc: BroadcastChannel | null = null
+    try {
+      bc = new BroadcastChannel('bookmarks-sync')
+      bc.onmessage = () => {
+        fetchBookmarks()
+      }
+    } catch {
+      // BroadcastChannel not supported in this browser
+    }
+
     return () => {
       supabase.removeChannel(channel)
+      bc?.close()
     }
-  }, [userId, supabase])
+  }, [userId, supabase, refreshKey, fetchBookmarks])
 
   const deleteBookmark = async (id: string) => {
     // Optimistic update
@@ -78,6 +89,15 @@ export default function BookmarkList({ userId }: { userId: string }) {
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
       setBookmarks(data || [])
+    } else {
+      // Notify other tabs
+      try {
+        const bc = new BroadcastChannel('bookmarks-sync')
+        bc.postMessage('changed')
+        bc.close()
+      } catch {
+        // BroadcastChannel not supported
+      }
     }
   }
 
